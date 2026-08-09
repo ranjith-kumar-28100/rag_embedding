@@ -1,0 +1,98 @@
+[project]
+name = "rag-embedding"
+version = "0.1.0"
+description = "Embedding, hybrid indexing & retrieval (chunk JSONL in -> retrievable context out)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+authors = [{ name = "rag_embedding" }]
+
+dependencies = [
+    # data models & config
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.5,<3",
+    # vector store: HNSW dense + native sparse + Query API fusion + aliases
+    "qdrant-client>=1.12,<2",
+    # local dense embeddings (default provider) — no external calls
+    "sentence-transformers>=3.0,<6",
+    "numpy>=1.26,<3",
+]
+
+[project.optional-dependencies]
+# microservice: FastAPI + Celery + Redis + SQLAlchemy + Streamlit UI
+service = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.30,<1",
+    "python-multipart>=0.0.9",
+    "celery>=5.4,<6",
+    "redis>=5.0,<6",
+    "sqlalchemy>=2.0,<3",
+    "alembic>=1.13,<2",
+    "httpx>=0.27,<1",
+    "streamlit>=1.38,<2",
+]
+# Azure dense embeddings (opt-in egress; rejected when offline=true).
+azure = [
+    "openai>=1.40,<3",
+]
+# LLM-judged RAGAS metrics. The deterministic retrieval metrics (hit-rate@k,
+# MRR, context_precision, context_recall) need none of this — see README §Eval.
+eval = [
+    "ragas>=0.2,<1",
+    "langchain-ollama>=0.2,<0.4",
+    "langchain-openai>=0.2,<0.4",
+]
+dev = [
+    "pytest>=8.3,<9",
+    "mypy>=1.13,<2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["rag_embedding"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "integration: needs a real Qdrant (opt-in via RAG_EMBED_TEST_QDRANT_URL)",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+disallow_any_generics = true
+plugins = ["pydantic.mypy"]
+# Alembic migration scripts are generated/loosely typed; keep them out of --strict.
+exclude = ['^alembic/']
+
+# Third-party libs with incomplete/awkward stubs. Treated as Any and confined to
+# the embedder/store/eval seams — which is exactly why each provider lives behind
+# a Protocol.
+[[tool.mypy.overrides]]
+module = [
+    "sentence_transformers.*",
+    "openai.*",
+    "ragas.*",
+    "langchain_ollama.*",
+    "langchain_openai.*",
+    "langchain_core.*",
+    "datasets.*",
+]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+ignore_missing_imports = true
+
+# Service libs with incomplete/absent stubs.
+[[tool.mypy.overrides]]
+module = [
+    "celery.*",
+    "streamlit.*",
+]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+ignore_missing_imports = true

@@ -1,0 +1,111 @@
+# Local, self-contained stack. No document data leaves the machine: embeddings
+# run in-container against a prefetched model cache, BM25 is arithmetic, Qdrant
+# is a local container, and api/worker/ui run with HF_HUB_OFFLINE=1 +
+# RAG_EMBED_OFFLINE=true.
+#
+#   docker compose --profile prefetch run --rm --build prefetch   # once, online
+#   docker compose up -d                                          # runs offline
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  volumes:
+    - data:/app/data
+    # read-write: sentence-transformers verifies/reads model files under
+    # $HOME=/models at runtime; offline is enforced by the env vars below, not
+    # by a read-only mount.
+    - model-cache:/models
+  environment: &offline-env
+    RAG_EMBED_SVC_REDIS_URL: redis://redis:6379/0
+    RAG_EMBED_SVC_DATABASE_URL: sqlite:////app/data/rag_embedding.db
+    RAG_EMBED_QDRANT_URL: http://qdrant:6333
+    RAG_EMBED_OFFLINE: "true"
+    HF_HOME: /models/hf
+    HOME: /models
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+  depends_on:
+    redis:
+      condition: service_healthy
+    qdrant:
+      condition: service_started
+
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redis-data:/data
+
+  qdrant:
+    # Keep this in step with the qdrant-client pin in pyproject.toml: the client
+    # refuses more than one minor version of skew.
+    image: qdrant/qdrant:v1.19.0
+    ports:
+      - "6333:6333"  # REST + dashboard at http://localhost:6333/dashboard
+      - "6334:6334"  # gRPC
+    volumes:
+      # HNSW graphs, quantized vectors and on-disk payload all live here.
+      - qdrant-storage:/qdrant/storage
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+
+  api:
+    <<: *app
+    command: sh -c "alembic upgrade head && uvicorn service_embed.api:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    <<: *app
+    command: celery -A service_embed.celery_app worker --loglevel=info --concurrency=2
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      api:
+        condition: service_started
+
+  ui:
+    <<: *app
+    command: streamlit run ui/app.py --server.port 8501 --server.address 0.0.0.0
+    environment:
+      <<: *offline-env
+      RAG_EMBED_SVC_API_BASE_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_started
+
+  # One-off, ONLINE. Populates the model-cache volume, then exits.
+  prefetch:
+    <<: *app
+    profiles: ["prefetch"]
+    command: python docker/prefetch.py
+    volumes:
+      - model-cache:/models  # read-write here (the only place that downloads)
+    # ONLINE: no HF_HUB_OFFLINE, and RAG_EMBED_OFFLINE is explicitly off so the
+    # prefetch script does not refuse to run.
+    environment:
+      HF_HOME: /models/hf
+      HOME: /models
+      RAG_EMBED_OFFLINE: "false"
+    depends_on: []
+
+volumes:
+  data:
+  model-cache:
+  qdrant-storage:
+  redis-data:
