@@ -39,6 +39,23 @@ from rag_embedding.store.qdrant_store import DENSE_VECTOR, SPARSE_VECTOR, Qdrant
 FIXTURE_COLLECTION = "test_rag_v1"
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _ignore_dotenv() -> Iterator[None]:
+    """Never read the developer's ``.env`` during tests.
+
+    ``EmbeddingConfig`` loads ``.env`` by design, so a local file (e.g. from
+    ``cp .env.example .env``) would otherwise leak into every config the suite
+    builds and quietly change what is being asserted. Explicit env vars set by
+    individual tests still work — this only removes the file.
+    """
+    original = EmbeddingConfig.model_config.get("env_file")
+    EmbeddingConfig.model_config["env_file"] = None
+    try:
+        yield
+    finally:
+        EmbeddingConfig.model_config["env_file"] = original
+
+
 class FakeDenseEmbedder:
     """Deterministic, content-derived, L2-normalized vectors.
 

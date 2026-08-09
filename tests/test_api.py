@@ -75,8 +75,26 @@ def _index_sample(client: TestClient, name: str = "chunks.jsonl") -> dict[str, A
 # --------------------------------------------------------------------------- #
 def test_health_reports_each_dependency(client: TestClient) -> None:
     body = client.get("/health").json()
-    assert set(body) == {"status", "qdrant", "redis", "active_collection"}
+    assert set(body) == {"status", "qdrant", "redis", "active_collection", "reranker"}
     assert body["qdrant"] == "ok"  # in-process Qdrant is reachable
+
+
+def test_health_reports_no_reranker_by_default(client: TestClient) -> None:
+    """The UI reads this to decide whether offering `rerank: true` can work."""
+    assert client.get("/health").json()["reranker"] is None
+
+
+def test_health_reports_the_reranker_when_enabled(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from service_embed import deps
+
+    monkeypatch.setenv("RAG_EMBED_RERANK_ENABLED", "true")
+    deps.get_config.cache_clear()
+    deps.get_reranker.cache_clear()
+    assert client.get("/health").json()["reranker"] == "cross_encoder:BAAI/bge-reranker-base"
+    deps.get_config.cache_clear()
+    deps.get_reranker.cache_clear()
 
 
 def test_index_upload_indexes_and_activates(client: TestClient) -> None:

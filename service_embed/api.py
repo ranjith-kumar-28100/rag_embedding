@@ -38,7 +38,7 @@ from rag_embedding.store.qdrant_store import (
 from . import repository, tasks
 from .config import get_settings
 from .db import SessionLocal, init_db
-from .deps import get_config, get_indexer, get_retriever, get_store
+from .deps import get_config, get_indexer, get_reranker, get_retriever, get_store
 from .models import JobKind
 from .schemas import (
     ActivateOut,
@@ -98,9 +98,21 @@ def health() -> HealthOut:
     except Exception as exc:  # noqa: BLE001
         redis_status = f"error: {exc}"
 
+    # Constructing the reranker is cheap — the model itself loads lazily on the
+    # first rerank — so health can report availability without paying for it.
+    try:
+        reranker = get_reranker()
+        reranker_id = reranker.model_id if reranker is not None else None
+    except Exception:  # noqa: BLE001 - a misconfigured reranker must not fail health
+        reranker_id = None
+
     overall = "ok" if qdrant_status == "ok" and redis_status == "ok" else "degraded"
     return HealthOut(
-        status=overall, qdrant=qdrant_status, redis=redis_status, active_collection=active
+        status=overall,
+        qdrant=qdrant_status,
+        redis=redis_status,
+        active_collection=active,
+        reranker=reranker_id,
     )
 
 

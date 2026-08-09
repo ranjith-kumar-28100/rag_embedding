@@ -26,18 +26,32 @@ def _client() -> httpx.Client:
     return httpx.Client(base_url=API_BASE, timeout=120.0)
 
 
+def _unwrap(resp: httpx.Response) -> Any:
+    """Return the JSON body, or surface the API's own error text and stop.
+
+    The service answers bad requests with a specific, actionable ``detail``
+    (dimension mismatch, no active collection, no reranker configured). Letting
+    httpx raise would replace all of that with a stack trace, so the message is
+    shown as-is instead.
+    """
+    if resp.is_success:
+        return resp.json()
+    try:
+        detail = resp.json().get("detail", resp.text)
+    except ValueError:
+        detail = resp.text
+    st.error(f"{resp.status_code} from {resp.request.url.path}: {detail}")
+    st.stop()
+
+
 def api_get(path: str, **params: Any) -> Any:
     with _client() as client:
-        resp = client.get(path, params=params or None)
-        resp.raise_for_status()
-        return resp.json()
+        return _unwrap(client.get(path, params=params or None))
 
 
 def api_post(path: str, **kwargs: Any) -> Any:
     with _client() as client:
-        resp = client.post(path, **kwargs)
-        resp.raise_for_status()
-        return resp.json()
+        return _unwrap(client.post(path, **kwargs))
 
 
 def health() -> dict[str, Any] | None:
@@ -62,11 +76,19 @@ if _status is None:
 # st.stop() raises internally but is not typed NoReturn, so re-bind for the checker.
 status: dict[str, Any] = _status or {}
 
-cols = st.columns(4)
+# None unless RAG_EMBED_RERANK_ENABLED=true on the API/worker.
+RERANKER: str | None = status.get("reranker")
+
+cols = st.columns(5)
 cols[0].metric("API", status["status"])
 cols[1].metric("Qdrant", status["qdrant"].split(":")[0])
 cols[2].metric("Redis", status["redis"].split(":")[0])
 cols[3].metric("Serving", status["active_collection"] or "—")
+cols[4].metric(
+    "Reranker",
+    RERANKER.split(":")[-1].split("/")[-1] if RERANKER else "off",
+    help=RERANKER or "set RAG_EMBED_RERANK_ENABLED=true to enable",
+)
 
 tab_index, tab_search, tab_eval, tab_collections = st.tabs(
     ["📥 Index", "🔍 Search", "📊 Evaluate", "🗃️ Collections"]
@@ -173,8 +195,18 @@ with tab_search:
     top_k = c2.number_input("top_k", min_value=1, max_value=100, value=10)
     with_parents = c3.checkbox("Parent context", value=True)
     compare = c4.checkbox("Compare modes", value=False)
+    # Offering "on" against a service with no reranker would only produce a 400.
     rerank_choice = c5.selectbox(
-        "Rerank", ["default", "on", "off"], help="cross-encoder")
+        "Rerank",
+        ["default", "on", "off"] if RERANKER else ["default"],
+        help=(
+            f"cross-encoder: {RERANKER}"
+            if RERANKER
+            else "no reranker configured — set RAG_EMBED_RERANK_ENABLED=true and "
+            "re-run `make prefetch` to cache the model"
+        ),
+        disabled=RERANKER is None,
+    )
 
     with st.expander("Filters"):
         f1, f2, f3, f4 = st.columns(4)
@@ -281,7 +313,11 @@ with tab_eval:
     eval_k = e2.number_input("top_k", min_value=1,
                              max_value=100, value=10, key="evalk")
     eval_rerank = e3.selectbox(
-        "Rerank", ["default", "on", "off"], key="evalrr")
+        "Rerank",
+        ["default", "on", "off"] if RERANKER else ["default"],
+        key="evalrr",
+        disabled=RERANKER is None,
+    )
     llm_metrics = e4.checkbox("LLM-judged metrics (slow)", value=False)
 
     if st.button("Run evaluation", type="primary", disabled=eval_file is None):

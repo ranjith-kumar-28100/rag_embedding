@@ -242,6 +242,11 @@ RAG_EMBED_RERANK_ENABLED=true make prefetch   # cache the cross-encoder, once
 RAG_EMBED_RERANK_ENABLED=true make up
 ```
 
+…or set `RAG_EMBED_RERANK_ENABLED=true` in `.env` beside `docker-compose.yml`, which
+Compose reads for the same interpolation. `GET /health` reports the loaded model
+(`"reranker": "cross_encoder:BAAI/bge-reranker-base"`, or `null` when off), and the
+UI reads that to decide whether to offer the rerank toggle at all.
+
 Two details that decide whether it does anything at all:
 
 - **Candidate widening.** With reranking on, the store is asked for
@@ -330,7 +335,7 @@ JSONL. Runs persist with a config snapshot so scores stay comparable across rein
 | POST | `/reindex` | build a new collection, optional alias swap |
 | GET | `/collections` | registry: models, dims, counts, active alias |
 | POST | `/collections/{name}/activate` | manual alias swap / rollback |
-| GET | `/health` | liveness (checks Qdrant + Redis) |
+| GET | `/health` | liveness (Qdrant + Redis) + which reranker, if any, is loaded |
 
 Indexing / reindex / evaluate are async (Celery); search is synchronous.
 

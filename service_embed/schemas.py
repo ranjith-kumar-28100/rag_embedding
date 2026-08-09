@@ -224,3 +224,6 @@ class HealthOut(BaseModel):
     qdrant: str
     redis: str
     active_collection: str | None
+    # Cross-encoder model id, or None when rerank_enabled=false. Clients need
+    # this to know whether asking for `rerank: true` can succeed at all.
+    reranker: str | None = None
