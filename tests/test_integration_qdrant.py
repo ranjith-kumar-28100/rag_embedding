@@ -11,6 +11,7 @@ the right neighbour from a real index.
 
 from __future__ import annotations
 
+import os
 import uuid
 from collections.abc import Iterator
 
@@ -21,6 +22,7 @@ from rag_embedding.config import EmbeddingConfig
 from rag_embedding.embedders.sparse_bm25 import Bm25Encoder
 from rag_embedding.indexer import Indexer
 from rag_embedding.models import Chunk, SearchFilters, SearchRequest
+from rag_embedding.rerank import build_reranker
 from rag_embedding.retrieval import Retriever
 from rag_embedding.store.docstore import InMemoryParentDocStore
 from rag_embedding.store.qdrant_store import QdrantStore
@@ -130,6 +132,50 @@ def test_reindex_and_zero_downtime_alias_swap(
     indexer.activate(v2)
     assert store.resolve_alias(live_prefix) == v2
     assert retriever.search(SearchRequest(query="fusion")).hits[0].chunk_id == "c1"
+
+
+@pytest.mark.skipif(
+    os.environ.get("RAG_EMBED_TEST_RERANK") != "1",
+    reason="set RAG_EMBED_TEST_RERANK=1 to load the real cross-encoder (~280 MB download)",
+)
+def test_real_cross_encoder_scores_and_reorders(
+    live: tuple[Indexer, Retriever, QdrantStore], sample_chunks: list[Chunk], live_prefix: str
+) -> None:
+    """The one test that actually loads BAAI/bge-reranker-base.
+
+    Everything else fakes the scorer, because what needs asserting elsewhere is
+    the wiring. This asserts the model loads offline-cacheably and produces a
+    usable ordering.
+    """
+    indexer, _retriever, store = live
+    v1 = f"{live_prefix}_v1"
+    indexer.ensure_collection(v1)
+    indexer.index_chunks(v1, sample_chunks)
+    indexer.activate(v1)
+
+    cfg = indexer.cfg.model_copy(update={"rerank_enabled": True, "rerank_candidates": 10})
+    reranker = build_reranker(cfg)
+    assert reranker is not None
+    retriever = Retriever(
+        cfg=cfg,
+        store=store,
+        dense=indexer.dense,
+        sparse=indexer.sparse,
+        docstore=indexer.docstore,
+        collection=cfg.alias,
+        reranker=reranker,
+    )
+
+    response = retriever.search(
+        SearchRequest(query="what were the quarterly revenue figures?", top_k=3)
+    )
+    assert response.reranked is True
+    assert response.timings["rerank_ms"] > 0
+    assert response.hits[0].chunk_id == "c3"  # the revenue table
+    assert all(h.retrieval_score is not None for h in response.hits)
+    assert all(h.source.endswith("+rerank") for h in response.hits)
+    scores = [h.score for h in response.hits]
+    assert scores == sorted(scores, reverse=True)
 
 
 def test_idempotent_upsert_against_a_real_index(

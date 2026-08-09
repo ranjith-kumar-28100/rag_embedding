@@ -64,6 +64,7 @@ class RagasEvaluator:
                     top_k=top_k,
                     mode=request.mode,
                     with_parents=with_parents,
+                    rerank=request.rerank,
                 )
             )
             contexts = _contexts_for(response, with_parents=with_parents)

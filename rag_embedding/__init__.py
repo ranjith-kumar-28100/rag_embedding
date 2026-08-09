@@ -25,6 +25,7 @@ from .models import (
     SearchResponse,
 )
 from .offline import enforce_offline
+from .rerank import CrossEncoderReranker, Reranker, build_reranker
 from .retrieval import Retriever
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "ChunkParseError",
     "ChunkRole",
     "CollectionSpec",
+    "CrossEncoderReranker",
     "EmbeddingConfig",
     "EvalQuestion",
     "EvalReport",
@@ -41,11 +43,13 @@ __all__ = [
     "IndexStats",
     "Indexer",
     "ParentContext",
+    "Reranker",
     "Retriever",
     "SearchFilters",
     "SearchHit",
     "SearchRequest",
     "SearchResponse",
+    "build_reranker",
     "enforce_offline",
     "iter_chunks",
     "load_chunks",

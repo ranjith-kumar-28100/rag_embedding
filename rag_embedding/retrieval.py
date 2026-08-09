@@ -8,7 +8,10 @@ Ordering of concerns, and why:
   1. dimension guard first — searching a collection built with another model
      returns plausible-looking nonsense, so it is a hard error, not a warning;
   2. fusion happens server-side in Qdrant (one round trip, one filter);
-  3. parent lookup last — it is a keyed fetch, so it must not run over more
+  3. reranking sits between fusion and parent lookup: it needs *more* candidates
+     than the caller asked for (it can only reorder what it is handed) and fewer
+     than the corpus (it is one forward pass per candidate);
+  4. parent lookup last — it is a keyed fetch, so it must not run over more
      children than survived ranking.
 """
 
@@ -29,7 +32,7 @@ from .models import (
     SearchRequest,
     SearchResponse,
 )
-from .rerank import maybe_rerank
+from .rerank import Reranker, build_reranker
 from .store.docstore import ParentDocStore
 from .store.qdrant_store import QdrantStore, build_filter
 
@@ -61,12 +64,16 @@ class Retriever:
         sparse: SparseEmbedder | None,
         docstore: ParentDocStore,
         collection: str | None = None,
+        reranker: Reranker | None = None,
     ) -> None:
         self.cfg = cfg
         self.store = store
         self.dense = dense
         self.sparse = sparse
         self.docstore = docstore
+        # Built from config when not injected, so flipping rerank_enabled is
+        # enough for a library caller — no second wiring step to forget.
+        self.reranker = reranker if reranker is not None else build_reranker(cfg)
         # Default target is the alias, never a physical collection — that is what
         # makes the reindex swap invisible to callers (§9).
         self.collection = collection or cfg.alias
@@ -80,6 +87,13 @@ class Retriever:
             self.cfg.with_parents if request.with_parents is None else request.with_parents
         )
         mode = self._effective_mode(request.mode)
+        reranker = self._effective_reranker(request.rerank)
+
+        # With a reranker in play, ask the store for a wider candidate set: it can
+        # only reorder what it receives, so fetching exactly top_k would make the
+        # whole step a no-op. Widen the prefetch too, or fusion would starve it.
+        limit = max(self.cfg.rerank_candidates, top_k) if reranker is not None else top_k
+        prefetch_k = max(prefetch_k, limit)
 
         dense_vector: list[float] | None = None
         sparse_vector = None
@@ -99,13 +113,17 @@ class Retriever:
                 mode=mode,
                 dense_vector=dense_vector,
                 sparse_vector=sparse_vector,
-                limit=top_k,
+                limit=limit,
                 prefetch_limit=prefetch_k,
                 query_filter=build_filter(request.filters),
             )
 
         hits = [_hit_from_point(point, source=mode) for point in points]
-        hits = maybe_rerank(self.cfg, request.query, hits)
+        if reranker is not None:
+            with timings.phase("rerank_ms"):
+                hits = reranker.rerank(request.query, hits, top_n=top_k)
+        else:
+            hits = hits[:top_k]
 
         parents: list[ParentContext] = []
         if with_parents:
@@ -116,6 +134,7 @@ class Retriever:
             query=request.query,
             mode=mode,
             collection=self.collection,
+            reranked=reranker is not None,
             hits=hits,
             parents=parents,
             timings=timings.values,
@@ -190,6 +209,19 @@ class Retriever:
         return out
 
     # -- internals ---------------------------------------------------------- #
+    def _effective_reranker(self, requested: bool | None) -> Reranker | None:
+        """Resolve the per-request override against the configured reranker."""
+        if requested is False:
+            return None
+        if requested is True and self.reranker is None:
+            # Asking for reranking on a service that has none must not quietly
+            # return unranked results — that reads as "the reranker didn't help".
+            raise ValueError(
+                "rerank=true requested but no reranker is configured; set "
+                "RAG_EMBED_RERANK_ENABLED=true (and prefetch the model)."
+            )
+        return self.reranker
+
     def _effective_mode(self, requested: SearchMode) -> SearchMode:
         """Degrade to dense when the sparse branch is switched off — loudly, once."""
         if self.sparse is not None:

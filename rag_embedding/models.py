@@ -152,6 +152,9 @@ class SearchRequest(BaseModel):
     filters: SearchFilters = Field(default_factory=SearchFilters)
     with_parents: bool | None = None
     prefetch_k: int | None = None
+    # Per-request override of rerank_enabled. Lets the playground A/B the
+    # reranker on one query without restarting the service.
+    rerank: bool | None = None
 
 
 class SearchHit(BaseModel):
@@ -159,7 +162,11 @@ class SearchHit(BaseModel):
     score: float
     text: str
     payload: dict[str, Any] = Field(default_factory=dict)
-    source: str  # "dense" | "sparse" | "hybrid" — which branch produced the hit
+    source: str  # "dense" | "sparse" | "hybrid" (+"+rerank") — how the hit was scored
+    # Pre-rerank fused score, kept when a cross-encoder replaces `score`. The two
+    # are on different scales, so both are reported rather than one silently
+    # standing in for the other.
+    retrieval_score: float | None = None
 
 
 class ParentContext(BaseModel):
@@ -177,6 +184,7 @@ class SearchResponse(BaseModel):
     query: str
     mode: SearchMode
     collection: str
+    reranked: bool = False  # whether a cross-encoder reordered the hits
     hits: list[SearchHit] = Field(default_factory=list)
     parents: list[ParentContext] = Field(default_factory=list)
     timings: dict[str, float] = Field(default_factory=dict)  # milliseconds
@@ -200,6 +208,9 @@ class EvalRequest(BaseModel):
     top_k: int | None = None
     mode: SearchMode = "hybrid"
     with_parents: bool | None = None
+    # Per-run rerank override — the point of evaluation is to measure whether the
+    # reranker actually helps, so it has to be switchable per run.
+    rerank: bool | None = None
     # LLM-judged metrics (slow, judge-quality dependent). Off by default (§10.2).
     llm_metrics: bool = False
 

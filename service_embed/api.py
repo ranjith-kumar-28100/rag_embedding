@@ -336,6 +336,7 @@ async def create_eval_run(
     dataset: str | None = Form(None),
     mode: str = Form("hybrid"),
     top_k: int | None = Form(None),
+    rerank: bool | None = Form(None),
     llm_metrics: bool = Form(False),
     collection: str | None = Form(None),
     session: Session = Depends(get_session),
@@ -351,6 +352,7 @@ async def create_eval_run(
         dataset=questions,
         top_k=top_k or cfg.top_k,
         mode=mode,
+        rerank=rerank,
         llm_metrics=llm_metrics,
     )
     target = collection or get_store().resolve_alias(cfg.alias) or cfg.alias
@@ -420,4 +422,6 @@ def _config_snapshot() -> dict[str, Any]:
         "hnsw_ef": cfg.hnsw_ef,
         "quantization": cfg.quantization,
         "rerank_enabled": cfg.rerank_enabled,
+        "rerank_model": cfg.rerank_model if cfg.rerank_enabled else None,
+        "rerank_candidates": cfg.rerank_candidates,
     }

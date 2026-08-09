@@ -19,6 +19,7 @@ from rag_embedding.embedders.factory import build_dense_embedder, build_sparse_e
 from rag_embedding.eval.ragas_eval import RagasEvaluator
 from rag_embedding.indexer import Indexer
 from rag_embedding.offline import enforce_offline
+from rag_embedding.rerank import Reranker, build_reranker
 from rag_embedding.retrieval import Retriever
 from rag_embedding.store.docstore import (
     ParentDocStore,
@@ -78,6 +79,12 @@ def get_docstore() -> ParentDocStore:
 
 
 @lru_cache
+def get_reranker() -> Reranker | None:
+    """The cross-encoder, or None when rerank_enabled=false. Loaded once per process."""
+    return build_reranker(get_config())
+
+
+@lru_cache
 def get_indexer() -> Indexer:
     return Indexer(
         cfg=get_config(),
@@ -98,6 +105,7 @@ def get_retriever(collection: str | None = None) -> Retriever:
         sparse=get_sparse(),
         docstore=get_docstore(),
         collection=collection,
+        reranker=get_reranker(),
     )
 
 
@@ -114,6 +122,7 @@ def reset() -> None:
         get_dense,
         get_sparse,
         get_docstore,
+        get_reranker,
         get_indexer,
     ):
         cached.cache_clear()

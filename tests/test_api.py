@@ -180,6 +180,58 @@ def test_search_filters(client: TestClient) -> None:
     assert {h["payload"]["file_type"] for h in body["hits"]} == {"xlsx"}
 
 
+def test_rerank_is_off_by_default_and_reported(client: TestClient) -> None:
+    _index_sample(client)
+    body = client.post("/search", json={"query": "revenue"}).json()
+    assert body["reranked"] is False
+    assert all(h["retrieval_score"] is None for h in body["hits"])
+
+
+def test_requesting_rerank_without_one_configured_is_400(client: TestClient) -> None:
+    _index_sample(client)
+    resp = client.post("/search", json={"query": "revenue", "rerank": True})
+    assert resp.status_code == 400
+    assert "RAG_EMBED_RERANK_ENABLED" in resp.json()["detail"]
+
+
+def test_rerank_reorders_and_widens_candidates(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end through the API with a stand-in cross-encoder."""
+    from service_embed import deps
+
+    from test_rerank import FakeReranker
+
+    _index_sample(client)
+    reranker = FakeReranker()
+    deps.get_reranker.cache_clear()
+    monkeypatch.setattr(deps, "build_reranker", lambda _cfg: reranker)
+    monkeypatch.setenv("RAG_EMBED_RERANK_ENABLED", "true")
+    deps.get_config.cache_clear()
+
+    body = client.post("/search", json={"query": "quarterly revenue", "top_k": 2}).json()
+    assert body["reranked"] is True
+    assert "rerank_ms" in body["timings"]
+    assert len(body["hits"]) == 2
+    assert body["hits"][0]["retrieval_score"] is not None
+    assert body["hits"][0]["source"].endswith("+rerank")
+    # more candidates were scored than were returned
+    assert reranker.calls[0][1] > 2
+
+    deps.get_reranker.cache_clear()
+    deps.get_config.cache_clear()
+
+
+def test_eval_run_records_the_rerank_setting(client: TestClient) -> None:
+    _index_sample(client)
+    created = client.post(
+        "/evaluate", data={"dataset": json.dumps(EVAL_SET), "rerank": "false"}
+    ).json()
+    run = client.get(f"/evaluate/{created['eval_run_id']}").json()
+    assert run["status"] == "done"
+    assert run["config_snapshot"]["rerank_enabled"] is False
+
+
 def test_search_compare_returns_all_modes(client: TestClient) -> None:
     _index_sample(client)
     body = client.post("/search/compare", json={"query": "revenue"}).json()

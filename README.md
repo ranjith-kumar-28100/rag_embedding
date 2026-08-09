@@ -214,9 +214,52 @@ across fields, ANDed.
 `POST /search/compare` runs all three modes for one query — three real queries, not a
 client-side re-fusion — which is what the UI's raw-vs-fused view shows.
 
-**Reranking is deferred** (§18 of the spec). `rerank_enabled=true` raises a clear
-error instead of silently no-opping, because a silent no-op looks like "the reranker
-didn't help."
+### Reranking (optional, local, open-source)
+
+A cross-encoder re-scores the fused candidates before parent lookup. The dense
+branch is a *bi-encoder*: it embeds query and chunk independently, so a chunk's
+vector is fixed before anyone asks a question. A cross-encoder reads the pair
+**together**, which is strictly more informative and correspondingly slower — one
+forward pass per candidate. That is why it runs on the fused top-N, not the corpus.
+
+| Model | Licence | Size | CPU latency @10 / @50 candidates |
+|---|---|---|---|
+| `BAAI/bge-reranker-base` (default) | MIT | ~280 MB | ~140 ms / ~610 ms |
+| `cross-encoder/ms-marco-MiniLM-L-6-v2` | Apache-2.0 | ~90 MB | ~25 ms / ~95 ms |
+
+Those are measured, not estimated, and they are the reason this is off by default:
+the fused search alone is ~10–20 ms, so reranking 50 candidates with the base model
+makes the request roughly **30× slower**. Size `rerank_candidates` against a latency
+budget, or take the MiniLM model. A GPU (`rerank_device=cuda`) changes the picture
+entirely.
+
+Both run through sentence-transformers' `CrossEncoder`, already a core dependency,
+so enabling reranking **adds no packages** — only a one-time model download that
+`make prefetch` picks up when `rerank_enabled=true`.
+
+```bash
+RAG_EMBED_RERANK_ENABLED=true make prefetch   # cache the cross-encoder, once
+RAG_EMBED_RERANK_ENABLED=true make up
+```
+
+Two details that decide whether it does anything at all:
+
+- **Candidate widening.** With reranking on, the store is asked for
+  `rerank_candidates` (default 50) instead of `top_k`, then truncated back to
+  `top_k` afterwards. Fetching exactly `top_k` would leave nothing to reorder, so
+  the config rejects `rerank_candidates < top_k` outright.
+- **Two scales.** Cross-encoder outputs are unbounded logits, unrelated to RRF's
+  reciprocal ranks. The reranked value replaces `score` and the fused value is kept
+  as `retrieval_score`, so both are always visible and neither silently stands in
+  for the other. `source` becomes e.g. `hybrid+rerank` and the response carries
+  `reranked: true`.
+
+Reranking is switchable **per request** (`{"rerank": true｜false}` on `/search`) and
+per eval run, so you can A/B it on one query or measure it against your eval set
+rather than taking it on faith. The Search tab shows fused-vs-reranked side by side
+and counts how many positions moved. Asking for `rerank: true` on a service with no
+reranker configured is a 400, not a silent pass-through — a silent no-op reads as
+"the reranker didn't help".
 
 ---
 
@@ -315,7 +358,8 @@ Library settings use the **`RAG_EMBED_`** prefix; the microservice's infra setti
 | `fusion` | `rrf` | `rrf` \| `dbsf` |
 | `top_k` / `child_prefetch_k` | 10 / 50 | retrieval sizes |
 | `with_parents` | `true` | small-to-big |
-| `rerank_enabled` / `rerank_model` | `false` / `bge-reranker-base` | deferred |
+| `rerank_enabled` / `rerank_model` | `false` / `bge-reranker-base` | local cross-encoder |
+| `rerank_candidates` / `rerank_batch_size` | 50 / 32 | rerank sizing |
 | `docstore` | `sqlite` | `sqlite` \| `qdrant` |
 | `ragas_llm_provider` / `ragas_model` | `ollama` / `mistral` | judge |
 | `chunk_source` | `upload` | `upload` \| `path` (dev-only) |
@@ -356,7 +400,7 @@ rag_embedding/           # the reusable library (mypy --strict, provider-agnosti
   chunks.py              # JSONL loader, parent/child split, payload round-trip
   indexer.py             # index + reindex pipelines
   retrieval.py           # hybrid fusion + parent lookup + filters
-  rerank.py              # deferred cross-encoder seam
+  rerank.py              # local cross-encoder reranking
   embedders/             # base (Protocols), dense_local, dense_azure, sparse_bm25, factory
   store/                 # qdrant_store (lifecycle/upsert/query/aliases), docstore
   eval/                  # metrics (deterministic), ragas_eval (harness)

@@ -71,9 +71,20 @@ class EmbeddingConfig(BaseSettings):
     child_prefetch_k: int = 50
     with_parents: bool = True
 
-    # rerank (§8.4) — deferred; wiring is stubbed, default off.
+    # rerank (§8.4) — local cross-encoder over the fused candidates.
+    # Default off, and the cost is not marginal: one forward pass per candidate.
+    # Measured on CPU, bge-reranker-base is ~140 ms at 10 candidates and ~610 ms
+    # at 50, against ~10-20 ms for the fused search itself. Turn it on when
+    # recall@k is already good but ordering is not, and size rerank_candidates
+    # (or switch to ms-marco-MiniLM-L-6-v2, ~6x faster) against a latency budget.
     rerank_enabled: bool = False
-    rerank_model: str = "BAAI/bge-reranker-base"
+    rerank_model: str = "BAAI/bge-reranker-base"  # MIT; ms-marco-MiniLM-L-6-v2 is lighter
+    rerank_device: str = "cpu"
+    rerank_batch_size: int = 32
+    rerank_max_length: int = 512
+    # How many fused hits get re-scored. Reranking can only reorder what it is
+    # given, so this must exceed top_k or the whole step is a no-op.
+    rerank_candidates: int = 50
 
     # parent docstore (§6.2) --------------------------------------------------
     docstore: Docstore = "sqlite"
@@ -131,6 +142,11 @@ class EmbeddingConfig(BaseSettings):
             raise ValueError(
                 f"child_prefetch_k ({self.child_prefetch_k}) must be >= top_k ({self.top_k}); "
                 "fusion needs at least top_k candidates from each branch."
+            )
+        if self.rerank_enabled and self.rerank_candidates < self.top_k:
+            raise ValueError(
+                f"rerank_candidates ({self.rerank_candidates}) must be >= top_k ({self.top_k}); "
+                "a reranker can only reorder the candidates it is handed."
             )
         return self
 

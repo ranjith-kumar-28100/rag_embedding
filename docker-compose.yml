@@ -21,6 +21,13 @@ x-app: &app
     RAG_EMBED_SVC_DATABASE_URL: sqlite:////app/data/rag_embedding.db
     RAG_EMBED_QDRANT_URL: http://qdrant:6333
     RAG_EMBED_OFFLINE: "true"
+    # `.env` is dockerignored (it never belongs in an image), so the reranker
+    # settings come through Compose interpolation instead — from the host
+    # environment or from a `.env` beside this file. The prefetch service needs
+    # the same values, or it would skip downloading a model the workers then
+    # demand at runtime.
+    RAG_EMBED_RERANK_ENABLED: "${RAG_EMBED_RERANK_ENABLED:-false}"
+    RAG_EMBED_RERANK_MODEL: "${RAG_EMBED_RERANK_MODEL:-BAAI/bge-reranker-base}"
     HF_HOME: /models/hf
     HOME: /models
     HF_HUB_OFFLINE: "1"
@@ -102,6 +109,8 @@ services:
       HF_HOME: /models/hf
       HOME: /models
       RAG_EMBED_OFFLINE: "false"
+      RAG_EMBED_RERANK_ENABLED: "${RAG_EMBED_RERANK_ENABLED:-false}"
+      RAG_EMBED_RERANK_MODEL: "${RAG_EMBED_RERANK_MODEL:-BAAI/bge-reranker-base}"
     depends_on: []
 
 volumes:

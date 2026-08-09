@@ -7,7 +7,6 @@ import pytest
 from rag_embedding.config import EmbeddingConfig
 from rag_embedding.indexer import Indexer
 from rag_embedding.models import Chunk, SearchFilters, SearchHit, SearchRequest
-from rag_embedding.rerank import RerankerNotAvailableError
 from rag_embedding.retrieval import Retriever
 from rag_embedding.store.docstore import InMemoryParentDocStore
 from rag_embedding.store.qdrant_store import DimensionMismatchError, QdrantStore
@@ -197,21 +196,12 @@ def test_dimension_mismatch_is_a_hard_error(
         other_model.search(SearchRequest(query="anything"))
 
 
-def test_rerank_enabled_fails_loudly(
-    indexed: Indexer,
-    store: QdrantStore,
-    fake_dense: FakeDenseEmbedder,
-    bm25: object,
-    docstore: InMemoryParentDocStore,
-) -> None:
-    """A stub that silently no-ops would look like 'reranking didn't help'."""
-    cfg = EmbeddingConfig(collection_prefix="test_rag", rerank_enabled=True)
-    retriever = Retriever(
-        cfg=cfg, store=store, dense=fake_dense, sparse=bm25,  # type: ignore[arg-type]
-        docstore=docstore, collection=FIXTURE_COLLECTION,
-    )
-    with pytest.raises(RerankerNotAvailableError, match="deferred"):
-        retriever.search(SearchRequest(query="retrieval"))
+def test_reranking_is_off_by_default(indexed: Indexer, retriever: Retriever) -> None:
+    """Default posture is fused-only; see test_rerank.py for the enabled path."""
+    response = retriever.search(SearchRequest(query="retrieval"))
+    assert retriever.reranker is None
+    assert response.reranked is False
+    assert all(h.retrieval_score is None for h in response.hits)
 
 
 def test_retriever_defaults_to_the_alias(

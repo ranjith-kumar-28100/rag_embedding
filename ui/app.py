@@ -138,6 +138,12 @@ def _render_hits(hits: list[dict[str, Any]]) -> None:
             {
                 "#": i + 1,
                 "score": round(h["score"], 4),
+                # Different scale from `score` once a cross-encoder has run.
+                "fused": (
+                    round(h["retrieval_score"], 4)
+                    if h.get("retrieval_score") is not None
+                    else ""
+                ),
                 "chunk_id": h["chunk_id"],
                 "type": h["payload"].get("block_type", ""),
                 "section": h["payload"].get("section_path_text", ""),
@@ -154,11 +160,12 @@ with tab_search:
     st.subheader("Search playground")
     query = st.text_input("Query", placeholder="how does retrieval fuse dense and sparse?")
 
-    c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+    c1, c2, c3, c4, c5 = st.columns([2, 1, 1, 1, 1])
     mode = c1.radio("Mode", ["hybrid", "dense", "sparse"], horizontal=True)
     top_k = c2.number_input("top_k", min_value=1, max_value=100, value=10)
     with_parents = c3.checkbox("Parent context", value=True)
     compare = c4.checkbox("Compare modes", value=False)
+    rerank_choice = c5.selectbox("Rerank", ["default", "on", "off"], help="cross-encoder")
 
     with st.expander("Filters"):
         f1, f2, f3, f4 = st.columns(4)
@@ -171,13 +178,15 @@ with tab_search:
         filters = {k: [v.strip() for v in vals] for k, vals in filters.items()}
 
     if st.button("Search", type="primary", disabled=not query):
-        body = {
+        body: dict[str, Any] = {
             "query": query,
             "mode": mode,
             "top_k": int(top_k),
             "with_parents": with_parents,
             "filters": filters,
         }
+        if rerank_choice != "default":
+            body["rerank"] = rerank_choice == "on"
         if compare:
             # Three real queries, one per mode — what each would return in prod.
             results = api_post("/search/compare", json=body)
@@ -195,10 +204,32 @@ with tab_search:
                             unsafe_allow_html=True,
                         )
             st.caption("🆕 marks a chunk only that mode found — the hybrid benefit, made visible.")
+        elif rerank_choice == "on":
+            # A/B the cross-encoder on this exact query: same candidates, one
+            # reordered by the reranker, so the effect is visible rather than
+            # asserted.
+            before = api_post("/search", json={**body, "rerank": False})
+            after = api_post("/search", json={**body, "rerank": True})
+            left, right = st.columns(2)
+            with left:
+                st.markdown(f"**fused only** — {before['timings'].get('search_ms', 0)} ms")
+                _render_hits(before["hits"])
+            with right:
+                st.markdown(
+                    f"**+ cross-encoder** — {after['timings'].get('rerank_ms', 0)} ms rerank"
+                )
+                _render_hits(after["hits"])
+            moved = sum(
+                1
+                for i, h in enumerate(after["hits"])
+                if i >= len(before["hits"]) or before["hits"][i]["chunk_id"] != h["chunk_id"]
+            )
+            st.caption(f"{moved} of {len(after['hits'])} positions changed after reranking.")
         else:
             resp = api_post("/search", json=body)
             st.caption(
                 f"collection `{resp['collection']}` · "
+                + ("reranked · " if resp.get("reranked") else "")
                 + " · ".join(f"{k} {v}ms" for k, v in resp["timings"].items())
             )
             st.markdown("#### Child hits")
@@ -229,10 +260,11 @@ with tab_eval:
     )
 
     eval_file = st.file_uploader("Eval set", type=["json", "jsonl"], key="evalset")
-    e1, e2, e3 = st.columns(3)
+    e1, e2, e3, e4 = st.columns(4)
     eval_mode = e1.selectbox("Mode", ["hybrid", "dense", "sparse"])
     eval_k = e2.number_input("top_k", min_value=1, max_value=100, value=10, key="evalk")
-    llm_metrics = e3.checkbox("LLM-judged metrics (slow)", value=False)
+    eval_rerank = e3.selectbox("Rerank", ["default", "on", "off"], key="evalrr")
+    llm_metrics = e4.checkbox("LLM-judged metrics (slow)", value=False)
 
     if st.button("Run evaluation", type="primary", disabled=eval_file is None):
         created = api_post(
@@ -242,6 +274,11 @@ with tab_eval:
                 "mode": eval_mode,
                 "top_k": int(eval_k),
                 "llm_metrics": str(llm_metrics).lower(),
+                **(
+                    {}
+                    if eval_rerank == "default"
+                    else {"rerank": str(eval_rerank == "on").lower()}
+                ),
             },
         )
         st.session_state["eval_run_id"] = created["eval_run_id"]
