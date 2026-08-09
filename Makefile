@@ -10,9 +10,9 @@ help:
 	@echo ""
 	@echo "Local dev (bare processes in the uv venv; needs local redis + qdrant):"
 	@echo "  make qdrant       run just Qdrant in Docker on :6333"
-	@echo "  make dev-api      uvicorn service_embed.api:app --reload"
+	@echo "  make dev-api      uvicorn service_embed.api:app --reload --port 8001"
 	@echo "  make dev-worker   celery -A service_embed.celery_app worker"
-	@echo "  make dev-ui       streamlit run ui/app.py"
+	@echo "  make dev-ui       streamlit run ui/app.py --server.port 8502"
 	@echo ""
 	@echo "DB migrations (SQLAlchemy + Alembic):"
 	@echo "  make migrate                 alembic upgrade head"
@@ -43,13 +43,13 @@ qdrant:
 
 # --- Local dev (uv venv) --------------------------------------------------
 dev-api:
-	uv run uvicorn service_embed.api:app --reload --port 8000
+	uv run uvicorn service_embed.api:app --reload --port 8001
 
 dev-worker:
 	uv run celery -A service_embed.celery_app worker --loglevel=info --concurrency=2
 
 dev-ui:
-	uv run streamlit run ui/app.py
+	uv run streamlit run ui/app.py --server.port 8502
 
 # --- Migrations -----------------------------------------------------------
 migrate:

@@ -35,8 +35,8 @@ make prefetch                 # ONCE, online: downloads the embedding model into
                               # the model-cache volume
 make up                       # qdrant + redis + api + worker + ui, fully offline
 
-# UI:  http://localhost:8501
-# API: http://localhost:8000/docs
+# UI:  http://localhost:8502
+# API: http://localhost:8001/docs
 # Qdrant dashboard: http://localhost:6333/dashboard
 ```
 
@@ -45,8 +45,8 @@ Then upload a stage-1 `chunks.jsonl` on the **Index** tab and search it on the
 [`examples/sample_chunks.jsonl`](examples/sample_chunks.jsonl):
 
 ```bash
-curl -F "files=@examples/sample_chunks.jsonl" http://localhost:8000/index
-curl -X POST http://localhost:8000/search \
+curl -F "files=@examples/sample_chunks.jsonl" http://localhost:8001/index
+curl -X POST http://localhost:8001/search \
      -H 'content-type: application/json' \
      -d '{"query": "how are dense and sparse signals combined?"}'
 ```
@@ -445,9 +445,9 @@ Needs a local Redis and Qdrant.
 uv venv && uv pip install --torch-backend=cpu -e ".[service,dev]"
 make qdrant
 make migrate
-make dev-api      # :8000
+make dev-api      # :8001
 make dev-worker
-make dev-ui       # :8501
+make dev-ui       # :8502
 ```
 
 ## Out of scope

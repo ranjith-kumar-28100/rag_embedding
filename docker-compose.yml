@@ -64,11 +64,11 @@ services:
 
   api:
     <<: *app
-    command: sh -c "alembic upgrade head && uvicorn service_embed.api:app --host 0.0.0.0 --port 8000"
+    command: sh -c "alembic upgrade head && uvicorn service_embed.api:app --host 0.0.0.0 --port 8001"
     ports:
-      - "8000:8000"
+      - "8001:8001"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8001/health"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -86,12 +86,12 @@ services:
 
   ui:
     <<: *app
-    command: streamlit run ui/app.py --server.port 8501 --server.address 0.0.0.0
+    command: streamlit run ui/app.py --server.port 8502 --server.address 0.0.0.0
     environment:
       <<: *offline-env
-      RAG_EMBED_SVC_API_BASE_URL: http://api:8000
+      RAG_EMBED_SVC_API_BASE_URL: http://api:8001
     ports:
-      - "8501:8501"
+      - "8502:8502"
     depends_on:
       api:
         condition: service_started

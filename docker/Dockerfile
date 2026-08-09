@@ -37,7 +37,7 @@ COPY docker ./docker
 # lockstep, which is what made stage 1's build fragile.
 RUN uv pip install --system --torch-backend=cpu -e ".[service]"
 
-EXPOSE 8000 8501
+EXPOSE 8001 8502
 
 # Overridden per service in docker-compose.
-CMD ["uvicorn", "service_embed.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "service_embed.api:app", "--host", "0.0.0.0", "--port", "8001"]

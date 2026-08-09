@@ -34,7 +34,7 @@ class ServiceSettings(BaseSettings):
     upload_dir: Path = Path("./data/uploads")
 
     # UI -> API ----------------------------------------------------------------
-    api_base_url: str = "http://localhost:8000"
+    api_base_url: str = "http://localhost:8001"
 
     def ensure_dirs(self) -> None:
         for directory in (self.data_dir, self.upload_dir):

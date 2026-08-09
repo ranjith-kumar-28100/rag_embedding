@@ -16,7 +16,8 @@ from typing import Any
 import httpx
 import streamlit as st
 
-API_BASE = os.environ.get("RAG_EMBED_SVC_API_BASE_URL", "http://localhost:8000")
+API_BASE = os.environ.get(
+    "RAG_EMBED_SVC_API_BASE_URL", "http://localhost:8001")
 
 st.set_page_config(page_title="rag_embedding", page_icon="🔎", layout="wide")
 
@@ -50,11 +51,13 @@ def health() -> dict[str, Any] | None:
 
 # --------------------------------------------------------------------------- #
 st.title("🔎 rag_embedding")
-st.caption("Hybrid indexing & retrieval over stage-1 chunks — nothing leaves this machine.")
+st.caption(
+    "Hybrid indexing & retrieval over stage-1 chunks — nothing leaves this machine.")
 
 _status = health()
 if _status is None:
-    st.error(f"API not reachable at {API_BASE}. Start it (see README) and reload.")
+    st.error(
+        f"API not reachable at {API_BASE}. Start it (see README) and reload.")
     st.stop()
 # st.stop() raises internally but is not typed NoReturn, so re-bind for the checker.
 status: dict[str, Any] = _status or {}
@@ -75,16 +78,19 @@ tab_index, tab_search, tab_eval, tab_collections = st.tabs(
 # --------------------------------------------------------------------------- #
 with tab_index:
     st.subheader("Index stage-1 chunks")
-    st.caption("Upload the `chunks.jsonl` (or `.jsonl.gz`) that rag_ingestion produced.")
+    st.caption(
+        "Upload the `chunks.jsonl` (or `.jsonl.gz`) that rag_ingestion produced.")
 
     uploads = st.file_uploader(
         "Chunk files", type=["jsonl", "gz", "ndjson", "json"], accept_multiple_files=True
     )
     if st.button("Index", type="primary", disabled=not uploads):
-        multipart = [("files", (f.name, f.getvalue())) for f in (uploads or [])]
+        multipart = [("files", (f.name, f.getvalue()))
+                     for f in (uploads or [])]
         created = api_post("/index", files=multipart)
         st.session_state["index_job_id"] = created["index_job_id"]
-        st.success(f"Job {created['index_job_id'][:8]} queued → {created['collection']}")
+        st.success(
+            f"Job {created['index_job_id'][:8]} queued → {created['collection']}")
 
     manual = st.text_input("…or open an existing index job id")
     if manual:
@@ -93,7 +99,8 @@ with tab_index:
     job_id = st.session_state.get("index_job_id")
     if job_id:
         job = api_get(f"/index/{job_id}")
-        st.markdown(f"**Job `{job_id[:12]}`** — {job['kind']} → `{job['collection']}` — {job['status']}")
+        st.markdown(
+            f"**Job `{job_id[:12]}`** — {job['kind']} → `{job['collection']}` — {job['status']}")
         st.progress(job["progress"] / 100.0, text=f"{job['progress']}%")
 
         m = st.columns(4)
@@ -158,14 +165,16 @@ def _render_hits(hits: list[dict[str, Any]]) -> None:
 
 with tab_search:
     st.subheader("Search playground")
-    query = st.text_input("Query", placeholder="how does retrieval fuse dense and sparse?")
+    query = st.text_input(
+        "Query", placeholder="how does retrieval fuse dense and sparse?")
 
     c1, c2, c3, c4, c5 = st.columns([2, 1, 1, 1, 1])
     mode = c1.radio("Mode", ["hybrid", "dense", "sparse"], horizontal=True)
     top_k = c2.number_input("top_k", min_value=1, max_value=100, value=10)
     with_parents = c3.checkbox("Parent context", value=True)
     compare = c4.checkbox("Compare modes", value=False)
-    rerank_choice = c5.selectbox("Rerank", ["default", "on", "off"], help="cross-encoder")
+    rerank_choice = c5.selectbox(
+        "Rerank", ["default", "on", "off"], help="cross-encoder")
 
     with st.expander("Filters"):
         f1, f2, f3, f4 = st.columns(4)
@@ -191,10 +200,12 @@ with tab_search:
             # Three real queries, one per mode — what each would return in prod.
             results = api_post("/search/compare", json=body)
             columns = st.columns(len(results))
-            all_ids = {m: {h["chunk_id"] for h in r["hits"]} for m, r in results.items()}
+            all_ids = {m: {h["chunk_id"] for h in r["hits"]}
+                       for m, r in results.items()}
             for col, (m, resp) in zip(columns, results.items(), strict=True):
                 with col:
-                    st.markdown(f"**{m}** — {resp['timings'].get('search_ms', 0)} ms")
+                    st.markdown(
+                        f"**{m}** — {resp['timings'].get('search_ms', 0)} ms")
                     others = set().union(*(v for k, v in all_ids.items() if k != m))
                     for i, hit in enumerate(resp["hits"], start=1):
                         unique = "🆕 " if hit["chunk_id"] not in others else ""
@@ -203,7 +214,8 @@ with tab_search:
                             f"({hit['score']:.4f})<br/><small>{hit['text'][:120]}</small>",
                             unsafe_allow_html=True,
                         )
-            st.caption("🆕 marks a chunk only that mode found — the hybrid benefit, made visible.")
+            st.caption(
+                "🆕 marks a chunk only that mode found — the hybrid benefit, made visible.")
         elif rerank_choice == "on":
             # A/B the cross-encoder on this exact query: same candidates, one
             # reordered by the reranker, so the effect is visible rather than
@@ -212,7 +224,8 @@ with tab_search:
             after = api_post("/search", json={**body, "rerank": True})
             left, right = st.columns(2)
             with left:
-                st.markdown(f"**fused only** — {before['timings'].get('search_ms', 0)} ms")
+                st.markdown(
+                    f"**fused only** — {before['timings'].get('search_ms', 0)} ms")
                 _render_hits(before["hits"])
             with right:
                 st.markdown(
@@ -224,7 +237,8 @@ with tab_search:
                 for i, h in enumerate(after["hits"])
                 if i >= len(before["hits"]) or before["hits"][i]["chunk_id"] != h["chunk_id"]
             )
-            st.caption(f"{moved} of {len(after['hits'])} positions changed after reranking.")
+            st.caption(
+                f"{moved} of {len(after['hits'])} positions changed after reranking.")
         else:
             resp = api_post("/search", json=body)
             st.caption(
@@ -244,7 +258,8 @@ with tab_search:
                         st.write(parent["text"])
                         st.caption(
                             "matched children: "
-                            + ", ".join(c["chunk_id"][:12] for c in parent["children"])
+                            + ", ".join(c["chunk_id"][:12]
+                                        for c in parent["children"])
                         )
 
 
@@ -259,11 +274,14 @@ with tab_eval:
         "indicative with a small local judge."
     )
 
-    eval_file = st.file_uploader("Eval set", type=["json", "jsonl"], key="evalset")
+    eval_file = st.file_uploader(
+        "Eval set", type=["json", "jsonl"], key="evalset")
     e1, e2, e3, e4 = st.columns(4)
     eval_mode = e1.selectbox("Mode", ["hybrid", "dense", "sparse"])
-    eval_k = e2.number_input("top_k", min_value=1, max_value=100, value=10, key="evalk")
-    eval_rerank = e3.selectbox("Rerank", ["default", "on", "off"], key="evalrr")
+    eval_k = e2.number_input("top_k", min_value=1,
+                             max_value=100, value=10, key="evalk")
+    eval_rerank = e3.selectbox(
+        "Rerank", ["default", "on", "off"], key="evalrr")
     llm_metrics = e4.checkbox("LLM-judged metrics (slow)", value=False)
 
     if st.button("Run evaluation", type="primary", disabled=eval_file is None):
@@ -287,7 +305,8 @@ with tab_eval:
     run_id = st.session_state.get("eval_run_id")
     if run_id:
         run = api_get(f"/evaluate/{run_id}")
-        st.markdown(f"**Run `{run_id[:12]}`** — {run['status']} on `{run['collection']}`")
+        st.markdown(
+            f"**Run `{run_id[:12]}`** — {run['status']} on `{run['collection']}`")
         if run["error"]:
             st.error(run["error"])
         if run["aggregate"]:
@@ -332,7 +351,8 @@ with tab_eval:
             use_container_width=True,
             hide_index=True,
         )
-        st.caption("Compare a candidate collection's scores against the live one before swapping.")
+        st.caption(
+            "Compare a candidate collection's scores against the live one before swapping.")
     else:
         st.info("No scored runs yet.")
 
@@ -343,7 +363,8 @@ with tab_eval:
 with tab_collections:
     st.subheader("Collections")
     registry = api_get("/collections")
-    st.caption(f"Serving alias `{registry['alias']}` → `{registry['active_collection'] or '—'}`")
+    st.caption(
+        f"Serving alias `{registry['alias']}` → `{registry['active_collection'] or '—'}`")
 
     if registry["collections"]:
         st.dataframe(
@@ -372,7 +393,8 @@ with tab_collections:
         "settings in the environment first. The live collection keeps serving until you activate."
     )
     reason = st.text_input("Reason (stored on the job for auditability)")
-    activate_now = st.checkbox("Activate automatically when it finishes", value=False)
+    activate_now = st.checkbox(
+        "Activate automatically when it finishes", value=False)
     if st.button("Start reindex", type="primary"):
         created = api_post(
             "/reindex", json={"reason": reason or None, "activate_on_success": activate_now}
